@@ -242,6 +242,24 @@
       </div>`);
   }
 
+  // この品目の購入履歴(過去に品目を削除して履歴だけ残っている同名の分も含む。別の品目に紐づく履歴は含めない)
+  const historyOf = (it) => S.purchases.filter((p) => pkey(p) === it.name && (p.itemId === it.id || !item(p.itemId)));
+
+  function openDeleteDlg(id) {
+    const it = item(id);
+    if (!it) return closeDlg();
+    const n = historyOf(it).length;
+    openDlg(`<h3>「${esc(it.name)}」を削除</h3>
+      ${n ? `<p>この品目の購入履歴が${n}件あります。履歴は月別の支出などの集計に使われています。</p>
+        <div class="note">「履歴も削除」を選ぶと、この分は支出の合計からも消えます。元に戻せません。</div>`
+          : '<p>購入履歴はありません。</p>'}
+      <div class="actions">
+        <button data-action="detail" data-id="${id}">戻る</button>
+        <button ${n ? '' : 'class="danger"'} data-action="del-item-keep" data-id="${id}">${n ? '履歴は残して削除' : '削除'}</button>
+        ${n ? `<button class="danger" data-action="del-item-all" data-id="${id}">履歴も削除</button>` : ''}
+      </div>`);
+  }
+
   function openSpend(ym) {
     const now = new Date();
     if (!ym) ym = { y: now.getFullYear(), m: now.getMonth() };
@@ -464,10 +482,17 @@
         it.memo = $('#dMemo').value.trim();
         persist(); closeDlg(); break;
       }
-      case 'del-item':
-        if (confirm('この品目を削除しますか?(購入履歴は支出集計用に残ります)')) {
-          S.items = S.items.filter((i) => i.id !== id); persist(); closeDlg();
-        } break;
+      case 'del-item': openDeleteDlg(id); break;
+      case 'del-item-keep': case 'del-item-all': {
+        const it = item(id);
+        if (!it) { closeDlg(); break; }
+        if (a === 'del-item-all') {
+          const gone = new Set(historyOf(it).map((p) => p.id));
+          S.purchases = S.purchases.filter((p) => !gone.has(p.id));
+        }
+        S.items = S.items.filter((i) => i.id !== id);
+        persist(); closeDlg(); break;
+      }
       case 'p-del': {
         const it = item(id);
         S.purchases = S.purchases.filter((p) => p.id !== t.dataset.pid);

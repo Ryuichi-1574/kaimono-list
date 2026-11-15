@@ -320,6 +320,10 @@
     let body = `<div class="note">ログイン中: ${esc(c.email)}</div>`;
     if (c.joined) {
       body += `<div class="note">共有中(メンバー${c.members}人)${c.ready ? '' : ' ・ 同期しています…'}</div>`;
+      if (c.invite) {
+        body += `<div class="note" style="color:var(--text)"><b>別の共有に招待されています。</b>参加すると、いまの共有から、招待された共有に移ります。</div>
+          <div class="actions" style="justify-content:flex-start"><button class="primary" data-action="cloud-use" data-hid="${esc(c.invite)}" ${c.busy ? 'disabled' : ''}>招待された共有に参加する</button></div>`;
+      }
       if (c.isOwner) {
         body += `<h4>家族を招待</h4>
           <div class="note">家族のGoogleメールアドレスを登録すると、その人がログインして「参加する」を押せます。</div>
@@ -327,12 +331,15 @@
           ${c.invited.map((m) => `<div class="inline" style="grid-template-columns:1fr 44px"><div class="note" style="align-self:center">招待中: ${esc(m)}</div><button class="danger" data-action="cloud-uninvite" data-email="${esc(m)}" aria-label="招待を取り消す">✕</button></div>`).join('')}`;
       }
       body += `<div class="actions" style="justify-content:flex-start"><button data-action="cloud-leave" ${c.busy ? 'disabled' : ''}>この端末の同期を止める</button></div>`;
-    } else if (c.mine) {
-      body += `<div class="note">このアカウントは共有に参加しています。</div>
-        <div class="actions" style="justify-content:flex-start"><button class="primary" data-action="cloud-use" data-hid="${esc(c.mine)}" ${c.busy ? 'disabled' : ''}>この端末で共有を使う</button></div>`;
-    } else if (c.invite) {
-      body += `<div class="note">家族から招待されています。</div>
-        <div class="actions" style="justify-content:flex-start"><button class="primary" data-action="cloud-use" data-hid="${esc(c.invite)}" ${c.busy ? 'disabled' : ''}>参加する</button></div>`;
+    } else if (c.invite || c.mine) {
+      if (c.invite) {
+        body += `<div class="note">家族から招待されています。</div>
+          <div class="actions" style="justify-content:flex-start"><button class="primary" data-action="cloud-use" data-hid="${esc(c.invite)}" ${c.busy ? 'disabled' : ''}>参加する</button></div>`;
+      }
+      if (c.mine) {
+        body += `<div class="note">${c.invite ? 'このアカウントで作った共有もあります。' : 'このアカウントは共有に参加しています。'}</div>
+          <div class="actions" style="justify-content:flex-start"><button ${c.invite ? '' : 'class="primary"'} data-action="cloud-use" data-hid="${esc(c.mine)}" ${c.busy ? 'disabled' : ''}>この端末で自分の共有を使う</button></div>`;
+      }
     } else {
       body += `<div class="note">まだ共有を始めていません。始めると、この端末のデータがすべて共有に追加されます。家族は、そのあとで招待できます。</div>
         <div class="actions" style="justify-content:flex-start"><button class="primary" data-action="cloud-create" ${c.busy ? 'disabled' : ''}>共有を始める</button></div>`;

@@ -136,10 +136,13 @@ async function discover() {
   discovery = { mine: null, invite: null };
   if (!user) return;
   try {
-    const mine = await getDocs(query(collection(db, 'households'), where('members', 'array-contains', user.uid)));
-    if (!mine.empty) { discovery.mine = mine.docs[0].id; return; }
+    // すでに共有に入っている端末では「自分の世帯」の検索は不要。招待は常に探す(別の共有への招待を知らせるため)。
+    if (!hid) {
+      const mine = await getDocs(query(collection(db, 'households'), where('members', 'array-contains', user.uid)));
+      if (!mine.empty) discovery.mine = mine.docs[0].id;
+    }
     const inv = await getDocs(query(collection(db, 'households'), where('invitedEmails', 'array-contains', user.email)));
-    discovery.invite = inv.empty ? null : inv.docs[0].id;
+    discovery.invite = inv.docs.map((d) => d.id).find((id) => id !== hid && id !== discovery.mine) || null;
   } catch (e) { err = errText(e); }
 }
 
@@ -259,6 +262,7 @@ const api = {
       if (discovery.invite === targetHid) {
         await updateDoc(doc(db, 'households', targetHid), { members: arrayUnion(user.uid), invitedEmails: arrayRemove(user.email) });
       }
+      stopListening(); // いまの共有から、参加先の共有へ移る
       hid = targetHid; saveHid(hid);
       if (merge) {
         const S = hooks().getState();
@@ -297,7 +301,8 @@ try {
     user = u;
     if (!u) { stopListening(); discovery = { mine: null, invite: null }; emit(); return; }
     hid = loadHid();
-    if (hid) startListening(); else await discover();
+    if (hid) startListening();
+    await discover();
     emit();
   });
 } catch (e) {

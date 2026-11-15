@@ -8,7 +8,21 @@
   // ---------- helpers ----------
   const esc = (v) => String(v ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const yen = (n) => '¥' + Math.round(n).toLocaleString('ja-JP');
-  const persist = () => Store.save(S);
+  const persist = () => { Store.save(S); if (window.Cloud) window.Cloud.onLocalChange(S); };
+  const cloud = () => window.Cloud || null;
+  const cstate = () => (window.Cloud ? window.Cloud.state() : null);
+
+  // cloud.js(家族共有)から呼ばれる。共有側の変更を取り込み、端末内にも保存する(送り返さない)
+  window.AppHooks = {
+    getState: () => S,
+    applyRemote(col, docs) {
+      if (col === 'lists' && !docs.length) return; // リストが1つもない状態にはしない
+      S[col] = docs;
+      if (!S.lists.some((l) => l.id === S.currentListId)) S.currentListId = S.lists[0].id;
+      Store.save(S);
+      render();
+    },
+  };
   const cats = () => [...S.categories].sort((a, b) => a.order - b.order);
   const catName = (id) => (S.categories.find((c) => c.id === id) || { name: '未分類' }).name;
   const item = (id) => S.items.find((i) => i.id === id);
@@ -65,7 +79,7 @@
   function addItem(name, categoryId, qty, memo) {
     S.items.push({
       id: uid(), listId: S.currentListId, categoryId: S.categories.some((c) => c.id === categoryId) ? categoryId : '',
-      name, qty: Math.max(1, qty || 1), memo: memo || '', checked: false, lastPurchaseId: null,
+      name, qty: Math.max(1, qty || 1), memo: memo || '', checked: false, lastPurchaseId: null, ts: Date.now(),
     });
   }
 
@@ -155,11 +169,18 @@
     const rb = $('#readdBtn');
     rb.disabled = !allDone.length;
     rb.textContent = allDone.length ? `購入済みを再追加 (${allDone.length})` : '購入済みを再追加';
+
+    // 同期の状態表示(共有に参加しているときだけ)
+    const cs = cstate();
+    $('#syncState').textContent = cs && cs.joined
+      ? (!navigator.onLine ? '☁ オフライン(つながると自動で同期します)' : cs.error ? '☁ 同期できていません' : cs.ready ? '☁ 家族と共有中' : '☁ 同期しています…')
+      : '';
   }
 
   // ---------- dialogs ----------
-  function openDlg(html) {
+  function openDlg(html, kind) {
     dlg.innerHTML = html;
+    dlg.dataset.kind = kind || '';
     if (!dlg.open) dlg.showModal();
   }
   const closeDlg = () => { if (dlg.open) dlg.close(); render(); };
@@ -285,9 +306,73 @@
       <div class="actions"><button data-action="cancel">閉じる</button></div>`);
   }
 
+  // ---------- 家族共有 ----------
+  function cloudSection() {
+    const c = cstate();
+    const head = '<h4>家族と共有</h4>';
+    if (!c) return `${head}<div class="note">共有機能を読み込めませんでした。電波のある場所で、アプリを開き直してください。(共有しなくても、今までどおり使えます)</div>`;
+    const err = c.error ? `<div class="note" style="color:var(--danger)">${esc(c.error)}</div>` : '';
+    const wait = c.busy ? '<div class="note">処理中です…</div>' : '';
+    if (!c.signedIn) {
+      return `${head}<div class="note">Googleアカウントでログインすると、家族とリストや購入履歴を共有できます。ログインしなくても、今までどおり使えます。</div>
+        ${wait}${err}<div class="actions" style="justify-content:flex-start"><button class="primary" data-action="cloud-signin" ${c.busy ? 'disabled' : ''}>Googleでログイン</button></div>`;
+    }
+    let body = `<div class="note">ログイン中: ${esc(c.email)}</div>`;
+    if (c.joined) {
+      body += `<div class="note">共有中(メンバー${c.members}人)${c.ready ? '' : ' ・ 同期しています…'}</div>`;
+      if (c.isOwner) {
+        body += `<h4>家族を招待</h4>
+          <div class="note">家族のGoogleメールアドレスを登録すると、その人がログインして「参加する」を押せます。</div>
+          <div class="inline" style="grid-template-columns:1fr auto"><input id="inviteEmail" type="email" inputmode="email" placeholder="家族のメールアドレス" autocomplete="off"><button data-action="cloud-invite" ${c.busy ? 'disabled' : ''}>招待</button></div>
+          ${c.invited.map((m) => `<div class="inline" style="grid-template-columns:1fr 44px"><div class="note" style="align-self:center">招待中: ${esc(m)}</div><button class="danger" data-action="cloud-uninvite" data-email="${esc(m)}" aria-label="招待を取り消す">✕</button></div>`).join('')}`;
+      }
+      body += `<div class="actions" style="justify-content:flex-start"><button data-action="cloud-leave" ${c.busy ? 'disabled' : ''}>この端末の同期を止める</button></div>`;
+    } else if (c.mine) {
+      body += `<div class="note">このアカウントは共有に参加しています。</div>
+        <div class="actions" style="justify-content:flex-start"><button class="primary" data-action="cloud-use" data-hid="${esc(c.mine)}" ${c.busy ? 'disabled' : ''}>この端末で共有を使う</button></div>`;
+    } else if (c.invite) {
+      body += `<div class="note">家族から招待されています。</div>
+        <div class="actions" style="justify-content:flex-start"><button class="primary" data-action="cloud-use" data-hid="${esc(c.invite)}" ${c.busy ? 'disabled' : ''}>参加する</button></div>`;
+    } else {
+      body += `<div class="note">まだ共有を始めていません。始めると、この端末のデータがすべて共有に追加されます。家族は、そのあとで招待できます。</div>
+        <div class="actions" style="justify-content:flex-start"><button class="primary" data-action="cloud-create" ${c.busy ? 'disabled' : ''}>共有を始める</button></div>`;
+    }
+    body += `<div class="actions" style="justify-content:flex-start"><button data-action="cloud-signout" ${c.busy ? 'disabled' : ''}>ログアウト</button></div>`;
+    return `${head}${body}${wait}${err}`;
+  }
+
+  // 設定画面が開いているときは、状態の変化に合わせて表示を更新する(入力中のメールアドレスは保つ)
+  function refreshCloudUI() {
+    render();
+    if (dlg.open && dlg.dataset.kind === 'settings') {
+      const el = $('#inviteEmail'); const v = el ? el.value : '';
+      const sc = dlg.scrollTop;
+      openSettings();
+      const el2 = $('#inviteEmail'); if (el2 && v) el2.value = v;
+      dlg.scrollTop = sc;
+    }
+  }
+  window.addEventListener('cloud-change', refreshCloudUI);
+  window.addEventListener('online', render);
+  window.addEventListener('offline', render);
+
+  function openMergeChoice(targetHid) {
+    const n = S.items.length, m = S.purchases.length;
+    openDlg(`<h3>この端末のデータを共有に追加しますか?</h3>
+      <p>この端末には、品目${n}件・購入履歴${m}件があります。</p>
+      <div class="note">「追加する」: 同じ名前のカテゴリ・リストはまとめ、同じ名前の品目や重複する履歴は追加しません。<br>
+        「追加しない」: 共有のデータだけを使います。この端末のデータは、念のため端末内にバックアップとして残ります。</div>
+      <div class="actions">
+        <button data-action="open-settings">キャンセル</button>
+        <button data-action="cloud-join" data-hid="${esc(targetHid)}" data-merge="0">追加しない</button>
+        <button class="primary" data-action="cloud-join" data-hid="${esc(targetHid)}" data-merge="1">追加する</button>
+      </div>`);
+  }
+
   function openSettings() {
     const cs = cats();
     openDlg(`<h3>設定</h3>
+      ${cloudSection()}
       <h4>リスト</h4>
       ${S.lists.map((l) => `<div class="inline" style="grid-template-columns:1fr 44px">
         <input value="${esc(l.name)}" data-change="list-name" data-id="${l.id}">
@@ -307,7 +392,7 @@
         <button data-action="import">読み込む</button>
       </div>
       <div class="note">データはこの端末のブラウザ内にだけ保存されています。機種変更やブラウザのデータ削除に備えて、ときどき書き出してください。読み込むと現在のデータは置き換わります。</div>
-      <div class="actions"><button class="primary" data-action="cancel">閉じる</button></div>`);
+      <div class="actions"><button class="primary" data-action="cancel">閉じる</button></div>`, 'settings');
   }
 
   // ---------- テキスト共有 ----------
@@ -417,7 +502,8 @@
     try { data = JSON.parse(await file.text()); } catch (e) { alert('ファイルを読み込めませんでした。'); return; }
     const ok = data && ['lists', 'categories', 'items', 'purchases'].every((k) => Array.isArray(data[k])) && data.lists.length > 0;
     if (!ok) { alert('買い物リストのバックアップファイルではありません。'); return; }
-    if (!confirm(`バックアップを読み込みます。現在のデータは置き換わります。\n(品目${data.items.length}件、購入履歴${data.purchases.length}件)`)) return;
+    const joined = cstate() && cstate().joined;
+    if (!confirm(`バックアップを読み込みます。現在のデータは置き換わります。${joined ? '\n【注意】家族と共有中のため、共有のデータも置き換わります。' : ''}\n(品目${data.items.length}件、購入履歴${data.purchases.length}件)`)) return;
     if (!data.lists.some((l) => l.id === data.currentListId)) data.currentListId = data.lists[0].id;
     S = data; persist(); closeDlg();
   }
@@ -469,6 +555,18 @@
         break;
       case 'export': exportData(); break;
       case 'import': $('#importFile').click(); break;
+      case 'cloud-signin': if (cloud()) cloud().signIn(); break;
+      case 'cloud-signout': if (cloud()) cloud().signOut(); break;
+      case 'cloud-create':
+        if (cloud() && confirm('この端末のデータをすべて共有に追加して、共有を始めます。\n念のため、設定の「書き出す」でバックアップを取っておくと安心です。\n始めますか?')) cloud().createHousehold();
+        break;
+      case 'cloud-use': openMergeChoice(t.dataset.hid); break;
+      case 'cloud-join': if (cloud()) { openSettings(); cloud().join(t.dataset.hid, t.dataset.merge === '1'); } break;
+      case 'cloud-invite': { const el = $('#inviteEmail'); if (cloud() && el) { const v = el.value; cloud().invite(v).then(() => { const e2 = $('#inviteEmail'); if (e2 && !(cstate() || {}).error) e2.value = ''; }); } break; }
+      case 'cloud-uninvite': if (cloud() && confirm('この招待を取り消しますか?')) cloud().uninvite(t.dataset.email); break;
+      case 'cloud-leave':
+        if (cloud() && confirm('この端末の同期を止めます。端末内のデータは、最後の状態のまま残ります。\nよろしいですか?')) cloud().leave();
+        break;
       case 'open-spend': openSpend(); break;
       case 'spend': openSpend({ y: +t.dataset.y, m: +t.dataset.m }); break;
       case 'open-settings': openSettings(); break;
@@ -501,7 +599,7 @@
       }
       case 'list-add': {
         const v = $('#newList').value.trim(); if (!v) return;
-        const l = { id: uid(), name: v }; S.lists.push(l); S.currentListId = l.id; persist(); openSettings(); break;
+        const l = { id: uid(), name: v, ts: Date.now() }; S.lists.push(l); S.currentListId = l.id; persist(); openSettings(); break;
       }
       case 'list-del':
         if (S.lists.length > 1 && confirm('このリストと品目を削除しますか?')) {
@@ -512,7 +610,7 @@
         } break;
       case 'cat-add': {
         const v = $('#newCat').value.trim(); if (!v) return;
-        S.categories.push({ id: uid(), name: v, order: Math.max(-1, ...S.categories.map((c) => c.order)) + 1 }); persist(); openSettings(); break;
+        S.categories.push({ id: uid(), name: v, order: Math.max(-1, ...S.categories.map((c) => c.order)) + 1, ts: Date.now() }); persist(); openSettings(); break;
       }
       case 'cat-del':
         if (confirm('このカテゴリを削除しますか?')) {

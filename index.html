@@ -18,6 +18,8 @@
   <button class="icon-btn" data-action="open-settings" aria-label="設定">⚙️</button>
 </header>
 
+<div id="syncState" class="sync" aria-live="polite"></div>
+
 <form id="addForm" class="add">
   <input id="addName" type="text" list="nameList" placeholder="品目を追加" autocomplete="off" required>
   <datalist id="nameList"></datalist>
@@ -48,5 +50,6 @@
 
 <script src="storage.js"></script>
 <script src="app.js"></script>
+<script type="module" src="cloud.js"></script>
 </body>
 </html>

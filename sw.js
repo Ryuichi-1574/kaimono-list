@@ -1,4 +1,4 @@
-const CACHE = 'shopping-list-v2';
+const CACHE = 'shopping-list-v3';
 const FILES = ['./', 'index.html', 'style.css', 'app.js', 'storage.js', 'cloud.js', 'manifest.webmanifest', 'icon.svg'];
 
 self.addEventListener('install', (e) => {

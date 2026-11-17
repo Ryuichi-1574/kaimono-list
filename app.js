@@ -92,7 +92,9 @@
   }
 
   // ---------- main render ----------
+  let swiping = false, renderQueued = false; // スワイプ中は再描画を保留する(共有側の更新が来ても行が消えないように)
   function render() {
+    if (swiping) { renderQueued = true; return; }
     // list select
     const sel = $('#listSelect');
     sel.innerHTML = S.lists.map((l) => `<option value="${l.id}" ${l.id === S.currentListId ? 'selected' : ''}>${esc(l.name)}</option>`).join('');
@@ -133,14 +135,18 @@
         const diff = Math.round((st.next.getTime() - startOfDay(new Date())) / DAY);
         if (diff <= 0) bits.push('そろそろ購入時期');
       }
-      return `<div class="row ${i.checked ? 'done' : ''}">
-        <button class="check" data-action="toggle" data-id="${i.id}" aria-label="購入済み切替"></button>
-        <button class="body" data-action="detail" data-id="${i.id}">
-          <div class="name">${esc(i.name)}</div>
-          ${bits.length ? `<div class="sub">${bits.join(' ・ ')}</div>` : ''}
-        </button>
-        <span class="qty">×${i.qty}</span>
-        ${i.checked ? `<button class="readd" data-action="readd-one" data-id="${i.id}">再追加</button>` : ''}
+      // 背面(.under)に、右スワイプ=購入済み(緑)・左スワイプ=削除(赤)を置く
+      return `<div class="swipe-row" data-id="${i.id}" data-done="${i.checked ? 1 : 0}">
+        <div class="under" aria-hidden="true"><span class="u-buy">${i.checked ? '' : '✓ 購入済み'}</span><span class="u-del">🗑 削除</span></div>
+        <div class="row ${i.checked ? 'done' : ''}">
+          <button class="check" data-action="toggle" data-id="${i.id}" aria-label="購入済み切替"></button>
+          <button class="body" data-action="detail" data-id="${i.id}">
+            <div class="name">${esc(i.name)}</div>
+            ${bits.length ? `<div class="sub">${bits.join(' ・ ')}</div>` : ''}
+          </button>
+          <span class="qty">×${i.qty}</span>
+          ${i.checked ? `<button class="readd" data-action="readd-one" data-id="${i.id}">再追加</button>` : ''}
+        </div>
       </div>`;
     };
 
@@ -670,6 +676,61 @@
     if (cid !== undefined && [...$('#addCat').options].some((o) => o.value === cid)) $('#addCat').value = cid;
   });
   $('#search').addEventListener('input', render);
+
+  // ---------- 横スワイプ(右=購入済み、左=削除) ----------
+  (() => {
+    const list = $('#list');
+    let sw = null;          // 進行中のスワイプ {wrap, row, id, done, x0, y0, dx, locked}
+    let lastSwipe = 0;      // スワイプ直後の click を打ち消すための時刻
+    const EDGE = 20;        // 画面の左右の端から始まる動きは、OSの「戻る」操作と競合するので無視
+
+    const threshold = (w) => Math.min(140, Math.max(80, w * 0.3));
+    const finish = (commit) => {
+      if (!sw) return;
+      const s = sw; sw = null;
+      s.row.classList.add('snap');
+      s.row.style.transform = '';
+      swiping = false;
+      if (s.locked === 'h') {
+        lastSwipe = Date.now();
+        if (commit && Math.abs(s.dx) >= threshold(s.wrap.offsetWidth)) {
+          if (s.dx > 0 && !s.done) openPriceDlg(s.id);
+          else if (s.dx < 0) openDeleteDlg(s.id);
+        }
+      }
+      setTimeout(() => { s.row.classList.remove('snap'); s.wrap.classList.remove('active'); }, 250);
+      if (renderQueued) { renderQueued = false; render(); }
+    };
+
+    list.addEventListener('pointerdown', (e) => {
+      if (e.pointerType === 'mouse' && e.button !== 0) return;
+      const wrap = e.target.closest('.swipe-row');
+      if (!wrap || e.clientX < EDGE || e.clientX > window.innerWidth - EDGE) return;
+      sw = { wrap, row: wrap.querySelector('.row'), id: wrap.dataset.id, done: wrap.dataset.done === '1', x0: e.clientX, y0: e.clientY, dx: 0, locked: null };
+    });
+
+    list.addEventListener('pointermove', (e) => {
+      if (!sw) return;
+      const dx = e.clientX - sw.x0, dy = e.clientY - sw.y0;
+      if (!sw.locked) {
+        if (Math.abs(dx) < 8 && Math.abs(dy) < 8) return;
+        if (Math.abs(dx) > Math.abs(dy) * 1.5) {
+          sw.locked = 'h'; swiping = true; sw.wrap.classList.add('active');
+          try { sw.row.setPointerCapture(e.pointerId); } catch (err) { /* 無視 */ }
+        } else { sw = null; return; } // 縦の動き = スクロール
+      }
+      sw.dx = (sw.done && dx > 0) ? 0 : dx; // 購入済みの行は、右スワイプ(購入済み)を無効にする
+      sw.row.classList.remove('snap');
+      sw.row.style.transform = `translateX(${sw.dx}px)`;
+    });
+
+    list.addEventListener('pointerup', () => finish(true));
+    list.addEventListener('pointercancel', () => finish(false));
+    // スワイプのあとに、ボタンの click が誤って発火しないようにする
+    list.addEventListener('click', (e) => {
+      if (Date.now() - lastSwipe < 400) { e.stopPropagation(); e.preventDefault(); }
+    }, true);
+  })();
 
   render();
 
